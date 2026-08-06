@@ -182,6 +182,27 @@ export class AssistantView extends LitElement {
             color: var(--placeholder-color);
         }
 
+        .send-button {
+            background: var(--text-color);
+            color: var(--bg-primary, #1e1e1e);
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: opacity 0.1s ease;
+        }
+
+        .send-button:hover {
+            opacity: 0.85;
+        }
+
+        .send-button:active {
+            opacity: 0.7;
+        }
+
         .nav-button {
             background: transparent;
             color: var(--text-secondary);
@@ -648,6 +669,8 @@ export class AssistantView extends LitElement {
                 </button>
 
                 <input type="text" id="textInput" placeholder="Type a message to the AI..." @keydown=${this.handleTextKeydown} />
+
+                <button class="send-button" @click=${this.handleSendText} title="Send message (Enter)">Send</button>
 
                 <button class="play-pause-btn" @click=${this.handlePlayPauseToggle} title="${this.isConversationPaused ? 'Resume' : 'Pause'} conversation (Alt+X)">
                     ${this.isConversationPaused 

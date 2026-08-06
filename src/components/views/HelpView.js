@@ -386,7 +386,7 @@ export class HelpView extends LitElement {
                         <span>How to Use</span>
                     </div>
                     <div class="usage-steps">
-                        <div class="usage-step"><strong>Start a Session:</strong> Enter your Gemini API key and click "Start Session"</div>
+                        <div class="usage-step"><strong>Start a Session:</strong> Enter your ChatGPT (OpenAI) API key and click "Start Session"</div>
                         <div class="usage-step"><strong>Customize:</strong> Choose your profile and language in the settings</div>
                         <div class="usage-step">
                             <strong>Position Window:</strong> Use keyboard shortcuts to move the window to your desired location

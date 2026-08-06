@@ -345,9 +345,21 @@ export class CheatingDaddyApp extends LitElement {
             return;
         }
 
-        await cheatingDaddy.initializeGemini(this.selectedProfile, this.selectedLanguage);
+        const initialized = await cheatingDaddy.initializeGemini(this.selectedProfile, this.selectedLanguage);
+        if (initialized === false) {
+            this.setStatus('Failed to start session — check your API key');
+            return;
+        }
+
         // Pass the screenshot interval as string (including 'manual' option)
-        cheatingDaddy.startCapture(this.selectedScreenshotInterval, this.selectedImageQuality);
+        try {
+            await cheatingDaddy.startCapture(this.selectedScreenshotInterval, this.selectedImageQuality);
+        } catch (captureError) {
+            console.error('Screen capture failed (text chat still available):', captureError);
+            this.setStatus('Screen capture unavailable — text chat still works');
+        }
+
+        this.sessionActive = true;
         this.responses = [];
         this.currentResponseIndex = -1;
         this.startTime = Date.now();
@@ -357,7 +369,7 @@ export class CheatingDaddyApp extends LitElement {
     async handleAPIKeyHelp() {
         if (window.require) {
             const { ipcRenderer } = window.require('electron');
-            await ipcRenderer.invoke('open-external', 'https://cheatingdaddy.com/help/api-key');
+            await ipcRenderer.invoke('open-external', 'https://platform.openai.com/api-keys');
         }
     }
 
@@ -418,15 +430,17 @@ export class CheatingDaddyApp extends LitElement {
 
     // Assistant view event handlers
     async handleSendText(message) {
+        this.setStatus('Sending...');
+        this._awaitingNewResponse = true;
+
         const result = await window.cheatingDaddy.sendTextMessage(message);
 
         if (!result.success) {
             console.error('Failed to send message:', result.error);
             this.setStatus('Error sending message: ' + result.error);
-        } else {
-            this.setStatus('Message sent...');
-            this._awaitingNewResponse = true;
+            this._awaitingNewResponse = false;
         }
+        // On success, status and streaming response are driven by main-process IPC events
     }
 
     handleResponseIndexChanged(e) {

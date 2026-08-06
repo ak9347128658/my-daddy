@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const { saveDebugAudio } = require('../audioUtils');
 const { getSystemPrompt } = require('./prompts');
 const { getAvailableModel, incrementLimitCount, getApiKey } = require('../storage');
+const chatgpt = require('./chatgpt');
 
 // Conversation tracking variables
 let currentSessionId = null;
@@ -13,6 +14,8 @@ let screenAnalysisHistory = [];
 let currentProfile = null;
 let currentCustomPrompt = null;
 let isInitializingSession = false;
+// 'openai' | 'gemini' | null — which backend owns the active session
+let activeProvider = null;
 
 function formatSpeakerResults(results) {
     let text = '';
@@ -183,10 +186,35 @@ async function getStoredSetting(key, defaultValue) {
     return defaultValue;
 }
 
+/**
+ * Initialize AI session. Prefers ChatGPT (OpenAI) for sk- keys;
+ * falls back to Gemini Live for Google API keys.
+ */
 async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'interview', language = 'en-US', isReconnect = false) {
     if (isInitializingSession) {
         console.log('Session initialization already in progress');
         return false;
+    }
+
+    // ChatGPT / OpenAI path — text + screen analysis (primary)
+    if (!isReconnect && chatgpt.looksLikeOpenAIKey(apiKey)) {
+        isInitializingSession = true;
+        const ok = await chatgpt.initializeChatGPTSession(apiKey, customPrompt, profile, language);
+        isInitializingSession = false;
+        if (ok) {
+            activeProvider = 'openai';
+            currentProfile = profile;
+            currentCustomPrompt = customPrompt;
+            currentSessionId = chatgpt.getCurrentSessionData().sessionId;
+            // No live websocket session object for OpenAI HTTP mode
+            return { provider: 'openai' };
+        }
+        return null;
+    }
+
+    // If key looks like OpenAI but validation failed above, don't try Gemini
+    if (!isReconnect && chatgpt.looksLikeOpenAIKey(apiKey)) {
+        return null;
     }
 
     isInitializingSession = true;
@@ -244,6 +272,17 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
                         const isNewResponse = messageBuffer === '';
                         messageBuffer += text;
                         sendToRenderer(isNewResponse ? 'new-response' : 'update-response', messageBuffer);
+                    }
+
+                    // Also handle plain text model turns (non-audio models / text replies)
+                    if (message.serverContent?.modelTurn?.parts) {
+                        for (const part of message.serverContent.modelTurn.parts) {
+                            if (part.text && part.text.trim()) {
+                                const isNewResponse = messageBuffer === '';
+                                messageBuffer += part.text;
+                                sendToRenderer(isNewResponse ? 'new-response' : 'update-response', messageBuffer);
+                            }
+                        }
                     }
 
                     if (message.serverContent?.generationComplete) {
@@ -305,6 +344,7 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
             },
         });
 
+        activeProvider = 'gemini';
         isInitializingSession = false;
         if (!isReconnect) {
             sendToRenderer('session-initializing', false);
@@ -312,9 +352,13 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
         return session;
     } catch (error) {
         console.error('Failed to initialize Gemini session:', error);
+
+        // If Gemini Live fails but key might still work via ChatGPT-style HTTP (unlikely for Google keys),
+        // fall through with failure. For OpenAI keys we already handled above.
         isInitializingSession = false;
         if (!isReconnect) {
             sendToRenderer('session-initializing', false);
+            sendToRenderer('update-status', 'Error: ' + (error.message || 'Failed to start session'));
         }
         return null;
     }
@@ -531,17 +575,97 @@ async function sendAudioToGemini(base64Data, geminiSessionRef) {
     }
 }
 
-async function sendImageToGeminiHttp(base64Data, prompt) {
-    // Get available model based on rate limits
-    const model = getAvailableModel();
-
+/**
+ * Send a plain text message via Gemini generateContent (HTTP), with streaming.
+ * Used when Gemini Live is unavailable or as a reliable path for typed input.
+ */
+async function sendTextToGeminiHttp(text) {
     const apiKey = getApiKey();
     if (!apiKey) {
         return { success: false, error: 'No API key configured' };
     }
 
+    if (!currentSessionId) {
+        initializeNewSession(currentProfile, currentCustomPrompt);
+    }
+
+    const model = getAvailableModel();
+    const userText = text.trim();
+    sendToRenderer('update-status', 'Thinking...');
+
+    try {
+        const ai = new GoogleGenAI({ apiKey });
+        const systemPrompt = getSystemPrompt(currentProfile || 'interview', currentCustomPrompt || '', false);
+
+        // Build multi-turn contents from history
+        const contents = [];
+        const recentTurns = conversationHistory.slice(-12);
+        for (const turn of recentTurns) {
+            if (turn.transcription) {
+                contents.push({ role: 'user', parts: [{ text: turn.transcription }] });
+            }
+            if (turn.ai_response) {
+                contents.push({ role: 'model', parts: [{ text: turn.ai_response }] });
+            }
+        }
+        contents.push({ role: 'user', parts: [{ text: userText }] });
+
+        console.log(`Sending text to ${model} (HTTP streaming)...`);
+        const response = await ai.models.generateContentStream({
+            model,
+            contents,
+            config: {
+                systemInstruction: systemPrompt,
+            },
+        });
+
+        incrementLimitCount(model);
+
+        let fullText = '';
+        let isFirst = true;
+        for await (const chunk of response) {
+            const chunkText = chunk.text;
+            if (chunkText) {
+                fullText += chunkText;
+                sendToRenderer(isFirst ? 'new-response' : 'update-response', fullText);
+                isFirst = false;
+            }
+        }
+
+        if (!fullText.trim()) {
+            fullText = '(No response from model)';
+            sendToRenderer('new-response', fullText);
+        }
+
+        saveConversationTurn(userText, fullText);
+        sendToRenderer('update-status', 'Ready');
+        return { success: true, text: fullText, model };
+    } catch (error) {
+        console.error('Error sending text to Gemini HTTP:', error);
+        const message = error.message || 'Failed to send message';
+        sendToRenderer('update-status', 'Error: ' + message);
+        sendToRenderer('new-response', `**Error:** ${message}`);
+        return { success: false, error: message };
+    }
+}
+
+async function sendImageToGeminiHttp(base64Data, prompt) {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+        return { success: false, error: 'No API key configured' };
+    }
+
+    // Prefer ChatGPT vision when using an OpenAI key or OpenAI session
+    if (activeProvider === 'openai' || chatgpt.looksLikeOpenAIKey(apiKey)) {
+        return chatgpt.sendImageMessage(base64Data, prompt);
+    }
+
+    // Get available model based on rate limits
+    const model = getAvailableModel();
+
     try {
         const ai = new GoogleGenAI({ apiKey: apiKey });
+        const imagePrompt = (prompt && String(prompt).trim()) || chatgpt.DEFAULT_SCREEN_PROMPT;
 
         const contents = [
             {
@@ -550,7 +674,7 @@ async function sendImageToGeminiHttp(base64Data, prompt) {
                     data: base64Data,
                 },
             },
-            { text: prompt },
+            { text: imagePrompt },
         ];
 
         console.log(`Sending image to ${model} (streaming)...`);
@@ -578,11 +702,15 @@ async function sendImageToGeminiHttp(base64Data, prompt) {
         console.log(`Image response completed from ${model}`);
 
         // Save screen analysis to history
-        saveScreenAnalysis(prompt, fullText, model);
+        saveScreenAnalysis(imagePrompt, fullText, model);
 
         return { success: true, text: fullText, model: model };
     } catch (error) {
         console.error('Error sending image to Gemini HTTP:', error);
+        // Fallback to ChatGPT if Gemini HTTP fails and key might be OpenAI
+        if (chatgpt.looksLikeOpenAIKey(apiKey)) {
+            return chatgpt.sendImageMessage(base64Data, prompt);
+        }
         return { success: false, error: error.message };
     }
 }
@@ -594,14 +722,22 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
     ipcMain.handle('initialize-gemini', async (event, apiKey, customPrompt, profile = 'interview', language = 'en-US') => {
         const session = await initializeGeminiSession(apiKey, customPrompt, profile, language);
         if (session) {
-            geminiSessionRef.current = session;
+            // OpenAI HTTP mode returns a marker object without close(); Gemini returns live session
+            if (session.provider === 'openai') {
+                geminiSessionRef.current = null;
+            } else {
+                geminiSessionRef.current = session;
+            }
             return true;
         }
         return false;
     });
 
     ipcMain.handle('send-audio-content', async (event, { data, mimeType }) => {
-        if (!geminiSessionRef.current) return { success: false, error: 'No active Gemini session' };
+        // Live audio only available on Gemini realtime sessions
+        if (activeProvider === 'openai' || !geminiSessionRef.current || !geminiSessionRef.current.sendRealtimeInput) {
+            return { success: false, error: 'Live audio requires a Gemini Live session' };
+        }
         try {
             process.stdout.write('.');
             await geminiSessionRef.current.sendRealtimeInput({
@@ -616,7 +752,9 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
 
     // Handle microphone audio on a separate channel
     ipcMain.handle('send-mic-audio-content', async (event, { data, mimeType }) => {
-        if (!geminiSessionRef.current) return { success: false, error: 'No active Gemini session' };
+        if (activeProvider === 'openai' || !geminiSessionRef.current || !geminiSessionRef.current.sendRealtimeInput) {
+            return { success: false, error: 'Live audio requires a Gemini Live session' };
+        }
         try {
             process.stdout.write(',');
             await geminiSessionRef.current.sendRealtimeInput({
@@ -645,7 +783,7 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
 
             process.stdout.write('!');
 
-            // Use HTTP API instead of realtime session
+            // Use HTTP API (ChatGPT vision or Gemini) instead of realtime session
             const result = await sendImageToGeminiHttp(data, prompt);
             return result;
         } catch (error) {
@@ -655,16 +793,23 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
     });
 
     ipcMain.handle('send-text-message', async (event, text) => {
-        if (!geminiSessionRef.current) return { success: false, error: 'No active Gemini session' };
-
         try {
             if (!text || typeof text !== 'string' || text.trim().length === 0) {
                 return { success: false, error: 'Invalid text message' };
             }
 
-            console.log('Sending text message:', text);
-            await geminiSessionRef.current.sendRealtimeInput({ text: text.trim() });
-            return { success: true };
+            const apiKey = getApiKey();
+
+            // ChatGPT / OpenAI — always use HTTP chat completions for typed messages
+            if (activeProvider === 'openai' || chatgpt.looksLikeOpenAIKey(apiKey)) {
+                console.log('Sending text via ChatGPT HTTP API');
+                return await chatgpt.sendTextMessage(text);
+            }
+
+            // Gemini: prefer reliable HTTP generateContent for typed input
+            // (Live native-audio often does not surface text replies correctly)
+            console.log('Sending text via Gemini HTTP API');
+            return await sendTextToGeminiHttp(text);
         } catch (error) {
             console.error('Error sending text:', error);
             return { success: false, error: error.message };
@@ -677,6 +822,11 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
                 success: false,
                 error: 'macOS audio capture only available on macOS',
             };
+        }
+
+        if (activeProvider === 'openai') {
+            // No Gemini live audio under OpenAI mode
+            return { success: true, skipped: true };
         }
 
         try {
@@ -706,11 +856,17 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             isUserClosing = true;
             sessionParams = null;
 
-            // Cleanup session
-            if (geminiSessionRef.current) {
+            // Cleanup Gemini live session
+            if (geminiSessionRef.current && typeof geminiSessionRef.current.close === 'function') {
                 await geminiSessionRef.current.close();
-                geminiSessionRef.current = null;
             }
+            geminiSessionRef.current = null;
+
+            // Cleanup ChatGPT session
+            if (activeProvider === 'openai' || chatgpt.isSessionActive()) {
+                await chatgpt.closeSession();
+            }
+            activeProvider = null;
 
             return { success: true };
         } catch (error) {
@@ -722,6 +878,9 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
     // Conversation history IPC handlers
     ipcMain.handle('get-current-session', async event => {
         try {
+            if (activeProvider === 'openai') {
+                return { success: true, data: chatgpt.getCurrentSessionData() };
+            }
             return { success: true, data: getCurrentSessionData() };
         } catch (error) {
             console.error('Error getting current session:', error);
@@ -731,6 +890,10 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
 
     ipcMain.handle('start-new-session', async event => {
         try {
+            if (activeProvider === 'openai') {
+                const sessionId = chatgpt.initializeNewSession(currentProfile, currentCustomPrompt);
+                return { success: true, sessionId };
+            }
             initializeNewSession();
             return { success: true, sessionId: currentSessionId };
         } catch (error) {
@@ -766,6 +929,7 @@ module.exports = {
     stopMacOSAudioCapture,
     sendAudioToGemini,
     sendImageToGeminiHttp,
+    sendTextToGeminiHttp,
     setupGeminiIpcHandlers,
     formatSpeakerResults,
 };

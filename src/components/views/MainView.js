@@ -221,7 +221,7 @@ export class MainView extends LitElement {
             <div class="input-group">
                 <input
                     type="password"
-                    placeholder="Enter your Gemini API Key"
+                    placeholder="Enter your ChatGPT / OpenAI API Key"
                     .value=${this.apiKey}
                     @input=${this.handleInput}
                     class="${this.showApiKeyError ? 'api-key-error' : ''}"

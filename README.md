@@ -11,33 +11,34 @@ This project is sponsored by Recall.ai.
 > [!NOTE]  
 > Use latest MacOS and Windows version, older versions have limited support
 
-> [!NOTE]  
-> During testing it wont answer if you ask something, you need to simulate interviewer asking question, which it will answer
-
-A real-time AI assistant that provides contextual help during video calls, interviews, presentations, and meetings using screen capture and audio analysis.
+A real-time AI assistant that provides contextual help during video calls, interviews, presentations, and meetings using screen capture and text chat.
 
 ## Features
 
-- **Live AI Assistance**: Real-time help powered by Google Gemini 2.0 Flash Live
-- **Screen & Audio Capture**: Analyzes what you see and hear for contextual responses
+- **ChatGPT (OpenAI) support**: Text chat and screen analysis via the OpenAI API (`gpt-4o-mini` by default)
+- **Gemini Live support**: Optional live audio sessions when using a Google Gemini API key
+- **Screen capture**: Analyze screenshots on demand for coding questions, MCQs, and more
+- **Text input**: Type questions directly — replies stream into the assistant panel
 - **Multiple Profiles**: Interview, Sales Call, Business Meeting, Presentation, Negotiation
 - **Transparent Overlay**: Always-on-top window that can be positioned anywhere
 - **Click-through Mode**: Make window transparent to clicks when needed
-- **Cross-platform**: Works on macOS, Windows, and Linux (kinda, dont use, just for testing rn)
+- **Cross-platform**: Works on macOS, Windows, and Linux (Linux is limited / for testing)
 
 ## Setup
 
-1. **Get a Gemini API Key**: Visit [Google AI Studio](https://aistudio.google.com/apikey)
+1. **Get an OpenAI API Key**: Visit [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
 2. **Install Dependencies**: `npm install`
 3. **Run the App**: `npm start`
 
+Optional env overrides: `OPENAI_CHAT_MODEL`, `OPENAI_VISION_MODEL` (default both: `gpt-4o-mini`).
+
 ## Usage
 
-1. Enter your Gemini API key in the main window
+1. Enter your ChatGPT / OpenAI API key (`sk-...`) in the main window
 2. Choose your profile and language in settings
 3. Click "Start Session" to begin
 4. Position the window using keyboard shortcuts
-5. The AI will provide real-time assistance based on your screen and what interview asks
+5. Type a message or capture the screen for AI assistance
 
 ## Keyboard Shortcuts
 
@@ -55,6 +56,6 @@ A real-time AI assistant that provides contextual help during video calls, inter
 ## Requirements
 
 - Electron-compatible OS (macOS, Windows, Linux)
-- Gemini API key
-- Screen recording permissions
-- Microphone/audio permissions
+- OpenAI API key (ChatGPT) — or a Gemini API key for live audio mode
+- Screen recording permissions (for screen analysis)
+- Microphone/audio permissions (optional; live audio is Gemini-only)

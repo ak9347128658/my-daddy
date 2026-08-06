@@ -135,15 +135,22 @@ function arrayBufferToBase64(buffer) {
 
 async function initializeGemini(profile = 'interview', language = 'en-US') {
     const apiKey = await storage.getApiKey();
-    if (apiKey) {
-        const prefs = await storage.getPreferences();
-        const success = await ipcRenderer.invoke('initialize-gemini', apiKey, prefs.customPrompt || '', profile, language);
-        if (success) {
-            cheatingDaddy.setStatus('Live');
-        } else {
-            cheatingDaddy.setStatus('error');
-        }
+    if (!apiKey) {
+        cheatingDaddy.setStatus('No API key');
+        return false;
     }
+
+    const prefs = await storage.getPreferences();
+    const success = await ipcRenderer.invoke('initialize-gemini', apiKey, prefs.customPrompt || '', profile, language);
+    if (success) {
+        // OpenAI sessions are HTTP chat; Gemini Live is realtime
+        const isOpenAI = typeof apiKey === 'string' && apiKey.trim().startsWith('sk-');
+        cheatingDaddy.setStatus(isOpenAI ? 'ChatGPT ready' : 'Live');
+        return true;
+    }
+
+    cheatingDaddy.setStatus('error');
+    return false;
 }
 
 // Listen for status updates
@@ -492,6 +499,7 @@ async function captureScreenshot(imageQuality = 'medium', isManual = false) {
 
                 const result = await ipcRenderer.invoke('send-image-content', {
                     data: base64data,
+                    prompt: AUTOMATIC_SCREENSHOT_PROMPT,
                 });
 
                 if (result.success) {
@@ -511,6 +519,8 @@ const MANUAL_SCREENSHOT_PROMPT = `Help me on this page, give me the answer no bs
 So if its a code question, give me the approach in few bullet points, then the entire code. Also if theres anything else i need to know, tell me.
 If its a question about the website, give me the answer no bs, complete answer.
 If its a mcq question, give me the answer no bs, complete answer.`;
+
+const AUTOMATIC_SCREENSHOT_PROMPT = `Briefly analyze this screenshot for anything the user may need help with right now (questions, code, forms, key UI). Be concise and actionable. If nothing needs a response, say "Nothing urgent on screen."`;
 
 async function captureManualScreenshot(imageQuality = null) {
     console.log('Manual screenshot triggered');
