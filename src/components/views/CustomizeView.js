@@ -4,7 +4,11 @@ import { resizeLayout } from '../../utils/windowResize.js';
 export class CustomizeView extends LitElement {
     static styles = css`
         * {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family:
+                'Inter',
+                -apple-system,
+                BlinkMacSystemFont,
+                sans-serif;
             cursor: default;
             user-select: none;
         }
@@ -541,7 +545,6 @@ export class CustomizeView extends LitElement {
         selectedImageQuality: { type: String },
         layoutMode: { type: String },
         keybinds: { type: Object },
-        googleSearchEnabled: { type: Boolean },
         backgroundTransparency: { type: Number },
         fontSize: { type: Number },
         theme: { type: String },
@@ -566,9 +569,6 @@ export class CustomizeView extends LitElement {
         this.onLanguageChange = () => {};
         this.onImageQualityChange = () => {};
         this.onLayoutModeChange = () => {};
-
-        // Google Search default
-        this.googleSearchEnabled = true;
 
         // Clear data state
         this.isClearing = false;
@@ -613,38 +613,93 @@ export class CustomizeView extends LitElement {
             { id: 'language', name: 'Language', icon: 'globe' },
             { id: 'capture', name: 'Capture', icon: 'camera' },
             { id: 'keyboard', name: 'Keyboard', icon: 'keyboard' },
-            { id: 'search', name: 'Search', icon: 'search' },
             { id: 'advanced', name: 'Advanced', icon: 'warning', danger: true },
         ];
     }
 
     renderSidebarIcon(icon) {
         const icons = {
-            user: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M19 21V19C19 17.9391 18.5786 16.9217 17.8284 16.1716C17.0783 15.4214 16.0609 15 15 15H9C7.93913 15 6.92172 15.4214 6.17157 16.1716C5.42143 16.9217 5 17.9391 5 19V21"></path>
+            user: html`<svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <path
+                    d="M19 21V19C19 17.9391 18.5786 16.9217 17.8284 16.1716C17.0783 15.4214 16.0609 15 15 15H9C7.93913 15 6.92172 15.4214 6.17157 16.1716C5.42143 16.9217 5 17.9391 5 19V21"
+                ></path>
                 <circle cx="12" cy="7" r="4"></circle>
             </svg>`,
-            mic: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            mic: html`<svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
                 <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
                 <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
                 <line x1="12" y1="19" x2="12" y2="23"></line>
                 <line x1="8" y1="23" x2="16" y2="23"></line>
             </svg>`,
-            globe: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            globe: html`<svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
                 <circle cx="12" cy="12" r="10"></circle>
                 <line x1="2" y1="12" x2="22" y2="12"></line>
                 <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
             </svg>`,
-            display: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            display: html`<svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
                 <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
                 <line x1="8" y1="21" x2="16" y2="21"></line>
                 <line x1="12" y1="17" x2="12" y2="21"></line>
             </svg>`,
-            camera: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            camera: html`<svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
                 <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
                 <circle cx="12" cy="13" r="4"></circle>
             </svg>`,
-            keyboard: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            keyboard: html`<svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
                 <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
                 <path d="M6 8h.001"></path>
                 <path d="M10 8h.001"></path>
@@ -655,11 +710,29 @@ export class CustomizeView extends LitElement {
                 <path d="M16 12h.001"></path>
                 <path d="M7 16h10"></path>
             </svg>`,
-            search: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            search: html`<svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
                 <circle cx="11" cy="11" r="8"></circle>
                 <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>`,
-            warning: html`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            warning: html`<svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
                 <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
                 <line x1="12" y1="9" x2="12" y2="13"></line>
                 <line x1="12" y1="17" x2="12.01" y2="17"></line>
@@ -670,12 +743,8 @@ export class CustomizeView extends LitElement {
 
     async _loadFromStorage() {
         try {
-            const [prefs, keybinds] = await Promise.all([
-                cheatingDaddy.storage.getPreferences(),
-                cheatingDaddy.storage.getKeybinds()
-            ]);
+            const [prefs, keybinds] = await Promise.all([cheatingDaddy.storage.getPreferences(), cheatingDaddy.storage.getKeybinds()]);
 
-            this.googleSearchEnabled = prefs.googleSearchEnabled ?? true;
             this.backgroundTransparency = prefs.backgroundTransparency ?? 0.8;
             this.fontSize = prefs.fontSize ?? 20;
             this.audioMode = prefs.audioMode ?? 'speaker_only';
@@ -996,23 +1065,6 @@ export class CustomizeView extends LitElement {
         e.target.blur();
     }
 
-    async handleGoogleSearchChange(e) {
-        this.googleSearchEnabled = e.target.checked;
-        await cheatingDaddy.storage.updatePreference('googleSearchEnabled', this.googleSearchEnabled);
-
-        // Notify main process if available
-        if (window.require) {
-            try {
-                const { ipcRenderer } = window.require('electron');
-                await ipcRenderer.invoke('update-google-search-setting', this.googleSearchEnabled);
-            } catch (error) {
-                console.error('Failed to notify main process:', error);
-            }
-        }
-
-        this.requestUpdate();
-    }
-
     async clearLocalData() {
         if (this.isClearing) return;
 
@@ -1096,9 +1148,7 @@ export class CustomizeView extends LitElement {
                         <select class="form-control" .value=${this.selectedProfile} @change=${this.handleProfileSelect}>
                             ${profiles.map(
                                 profile => html`
-                                    <option value=${profile.value} ?selected=${this.selectedProfile === profile.value}>
-                                        ${profile.name}
-                                    </option>
+                                    <option value=${profile.value} ?selected=${this.selectedProfile === profile.value}>${profile.name}</option>
                                 `
                             )}
                         </select>
@@ -1114,9 +1164,7 @@ export class CustomizeView extends LitElement {
                             .value=${this.customPrompt}
                             @input=${this.handleCustomPromptInput}
                         ></textarea>
-                        <div class="form-description">
-                            Personalize the AI's behavior with specific instructions
-                        </div>
+                        <div class="form-description">Personalize the AI's behavior with specific instructions</div>
                     </div>
                 </div>
             </div>
@@ -1134,9 +1182,7 @@ export class CustomizeView extends LitElement {
                         <option value="mic_only">Microphone Only (Me)</option>
                         <option value="both">Both Speaker & Microphone</option>
                     </select>
-                    <div class="form-description">
-                        Choose which audio sources to capture for the AI.
-                    </div>
+                    <div class="form-description">Choose which audio sources to capture for the AI.</div>
                 </div>
             </div>
         `;
@@ -1157,9 +1203,7 @@ export class CustomizeView extends LitElement {
                     <select class="form-control" .value=${this.selectedLanguage} @change=${this.handleLanguageSelect}>
                         ${languages.map(
                             language => html`
-                                <option value=${language.value} ?selected=${this.selectedLanguage === language.value}>
-                                    ${language.name}
-                                </option>
+                                <option value=${language.value} ?selected=${this.selectedLanguage === language.value}>${language.name}</option>
                             `
                         )}
                     </select>
@@ -1182,17 +1226,9 @@ export class CustomizeView extends LitElement {
                         <span class="current-selection">${currentTheme?.name || 'Dark'}</span>
                     </label>
                     <select class="form-control" .value=${this.theme} @change=${this.handleThemeChange}>
-                        ${themes.map(
-                            theme => html`
-                                <option value=${theme.value} ?selected=${this.theme === theme.value}>
-                                    ${theme.name}
-                                </option>
-                            `
-                        )}
+                        ${themes.map(theme => html` <option value=${theme.value} ?selected=${this.theme === theme.value}>${theme.name}</option> `)}
                     </select>
-                    <div class="form-description">
-                        Choose a color theme for the interface
-                    </div>
+                    <div class="form-description">Choose a color theme for the interface</div>
                 </div>
 
                 <div class="form-group">
@@ -1205,10 +1241,7 @@ export class CustomizeView extends LitElement {
                         <option value="compact" ?selected=${this.layoutMode === 'compact'}>Compact</option>
                     </select>
                     <div class="form-description">
-                        ${this.layoutMode === 'compact'
-                            ? 'Smaller window with reduced padding'
-                            : 'Standard layout with comfortable spacing'
-                        }
+                        ${this.layoutMode === 'compact' ? 'Smaller window with reduced padding' : 'Standard layout with comfortable spacing'}
                     </div>
                 </div>
 
@@ -1266,7 +1299,9 @@ export class CustomizeView extends LitElement {
                 <div class="form-group">
                     <label class="form-label">
                         Image Quality
-                        <span class="current-selection">${this.selectedImageQuality.charAt(0).toUpperCase() + this.selectedImageQuality.slice(1)}</span>
+                        <span class="current-selection"
+                            >${this.selectedImageQuality.charAt(0).toUpperCase() + this.selectedImageQuality.slice(1)}</span
+                        >
                     </label>
                     <select class="form-control" .value=${this.selectedImageQuality} @change=${this.handleImageQualitySelect}>
                         <option value="high" ?selected=${this.selectedImageQuality === 'high'}>High Quality</option>
@@ -1274,11 +1309,12 @@ export class CustomizeView extends LitElement {
                         <option value="low" ?selected=${this.selectedImageQuality === 'low'}>Low Quality</option>
                     </select>
                     <div class="form-description">
-                        ${this.selectedImageQuality === 'high'
-                            ? 'Best quality, uses more tokens'
-                            : this.selectedImageQuality === 'medium'
-                              ? 'Balanced quality and token usage'
-                              : 'Lower quality, uses fewer tokens'
+                        ${
+                            this.selectedImageQuality === 'high'
+                                ? 'Best quality, uses more tokens'
+                                : this.selectedImageQuality === 'medium'
+                                  ? 'Balanced quality and token usage'
+                                  : 'Lower quality, uses fewer tokens'
                         }
                     </div>
                 </div>
@@ -1331,28 +1367,6 @@ export class CustomizeView extends LitElement {
         `;
     }
 
-    renderSearchSection() {
-        return html`
-            <div class="content-header">Search</div>
-            <div class="form-grid">
-                <div class="checkbox-group">
-                    <input
-                        type="checkbox"
-                        class="checkbox-input"
-                        id="google-search-enabled"
-                        .checked=${this.googleSearchEnabled}
-                        @change=${this.handleGoogleSearchChange}
-                    />
-                    <label for="google-search-enabled" class="checkbox-label">Enable Google Search</label>
-                </div>
-                <div class="form-description" style="margin-left: 24px; margin-top: -8px;">
-                    Allow the AI to search Google for up-to-date information during conversations.
-                    <br /><strong>Note:</strong> Changes take effect when starting a new AI session.
-                </div>
-            </div>
-        `;
-    }
-
     renderAdvancedSection() {
         return html`
             <div class="content-header" style="color: var(--error-color);">Advanced</div>
@@ -1360,20 +1374,21 @@ export class CustomizeView extends LitElement {
                 <div class="form-group">
                     <label class="form-label" style="color: var(--error-color);">Data Management</label>
                     <div class="form-description" style="margin-bottom: 12px;">
-                        <strong>Warning:</strong> This action will permanently delete all local data including API keys, preferences, and session history. This cannot be undone.
+                        <strong>Warning:</strong> This action will permanently delete all local data including API keys, preferences, and session
+                        history. This cannot be undone.
                     </div>
-                    <button
-                        class="danger-button"
-                        @click=${this.clearLocalData}
-                        ?disabled=${this.isClearing}
-                    >
+                    <button class="danger-button" @click=${this.clearLocalData} ?disabled=${this.isClearing}>
                         ${this.isClearing ? 'Clearing...' : 'Clear All Local Data'}
                     </button>
-                    ${this.clearStatusMessage ? html`
-                        <div class="status-message ${this.clearStatusType === 'success' ? 'status-success' : 'status-error'}">
-                            ${this.clearStatusMessage}
-                        </div>
-                    ` : ''}
+                    ${
+                        this.clearStatusMessage
+                            ? html`
+                                  <div class="status-message ${this.clearStatusType === 'success' ? 'status-success' : 'status-error'}">
+                                      ${this.clearStatusMessage}
+                                  </div>
+                              `
+                            : ''
+                    }
                 </div>
             </div>
         `;
@@ -1393,8 +1408,6 @@ export class CustomizeView extends LitElement {
                 return this.renderCaptureSection();
             case 'keyboard':
                 return this.renderKeyboardSection();
-            case 'search':
-                return this.renderSearchSection();
             case 'advanced':
                 return this.renderAdvancedSection();
             default:
@@ -1420,9 +1433,7 @@ export class CustomizeView extends LitElement {
                         `
                     )}
                 </nav>
-                <div class="settings-content">
-                    ${this.renderSectionContent()}
-                </div>
+                <div class="settings-content">${this.renderSectionContent()}</div>
             </div>
         `;
     }

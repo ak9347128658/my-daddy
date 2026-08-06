@@ -1,9 +1,14 @@
-const { GoogleGenAI, Modality } = require('@google/genai');
+const OpenAI = require('openai');
+const WebSocket = require('ws');
 const { BrowserWindow, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const { saveDebugAudio } = require('../audioUtils');
 const { getSystemPrompt } = require('./prompts');
 const { getAvailableModel, incrementLimitCount, getApiKey } = require('../storage');
+
+// OpenAI ChatGPT models only
+const REALTIME_MODEL = 'gpt-4o-realtime-preview';
+const VISION_MODEL = 'gpt-4o';
 
 // Conversation tracking variables
 let currentSessionId = null;
@@ -13,19 +18,6 @@ let screenAnalysisHistory = [];
 let currentProfile = null;
 let currentCustomPrompt = null;
 let isInitializingSession = false;
-
-function formatSpeakerResults(results) {
-    let text = '';
-    for (const result of results) {
-        if (result.transcript && result.speakerId) {
-            const speakerLabel = result.speakerId === 1 ? 'Interviewer' : 'Candidate';
-            text += `[${speakerLabel}]: ${result.transcript}\n`;
-        }
-    }
-    return text;
-}
-
-module.exports.formatSpeakerResults = formatSpeakerResults;
 
 // Audio capture variables
 let systemAudioProc = null;
@@ -52,9 +44,7 @@ function buildContextMessage() {
 
     if (validTurns.length === 0) return null;
 
-    const contextLines = validTurns.map(turn =>
-        `[Interviewer]: ${turn.transcription.trim()}\n[Your answer]: ${turn.ai_response.trim()}`
-    );
+    const contextLines = validTurns.map(turn => `[Interviewer]: ${turn.transcription.trim()}\n[Your answer]: ${turn.ai_response.trim()}`);
 
     return `Session reconnected. Here's the conversation so far:\n\n${contextLines.join('\n\n')}\n\nContinue from here.`;
 }
@@ -69,12 +59,11 @@ function initializeNewSession(profile = null, customPrompt = null) {
     currentCustomPrompt = customPrompt;
     console.log('New conversation session started:', currentSessionId, 'profile:', profile);
 
-    // Save initial session with profile context
     if (profile) {
         sendToRenderer('save-session-context', {
             sessionId: currentSessionId,
             profile: profile,
-            customPrompt: customPrompt || ''
+            customPrompt: customPrompt || '',
         });
     }
 }
@@ -93,7 +82,6 @@ function saveConversationTurn(transcription, aiResponse) {
     conversationHistory.push(conversationTurn);
     console.log('Saved conversation turn:', conversationTurn);
 
-    // Send to renderer to save in IndexedDB
     sendToRenderer('save-conversation-turn', {
         sessionId: currentSessionId,
         turn: conversationTurn,
@@ -110,19 +98,18 @@ function saveScreenAnalysis(prompt, response, model) {
         timestamp: Date.now(),
         prompt: prompt,
         response: response.trim(),
-        model: model
+        model: model,
     };
 
     screenAnalysisHistory.push(analysisEntry);
     console.log('Saved screen analysis:', analysisEntry);
 
-    // Send to renderer to save
     sendToRenderer('save-screen-analysis', {
         sessionId: currentSessionId,
         analysis: analysisEntry,
         fullHistory: screenAnalysisHistory,
         profile: currentProfile,
-        customPrompt: currentCustomPrompt
+        customPrompt: currentCustomPrompt,
     });
 }
 
@@ -133,57 +120,284 @@ function getCurrentSessionData() {
     };
 }
 
-async function getEnabledTools() {
-    const tools = [];
+/**
+ * OpenAI Realtime session wrapper – mirrors the previous Gemini live session surface
+ * so audio/text IPC handlers stay simple.
+ */
+function createRealtimeSession(ws) {
+    return {
+        ws,
+        sendRealtimeInput: async input => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                throw new Error('No active ChatGPT session');
+            }
 
-    // Check if Google Search is enabled (default: true)
-    const googleSearchEnabled = await getStoredSetting('googleSearchEnabled', 'true');
-    console.log('Google Search enabled:', googleSearchEnabled);
+            if (input.text) {
+                ws.send(
+                    JSON.stringify({
+                        type: 'conversation.item.create',
+                        item: {
+                            type: 'message',
+                            role: 'user',
+                            content: [{ type: 'input_text', text: input.text }],
+                        },
+                    })
+                );
+                ws.send(
+                    JSON.stringify({
+                        type: 'response.create',
+                        response: {
+                            modalities: ['text'],
+                        },
+                    })
+                );
+                return;
+            }
 
-    if (googleSearchEnabled === 'true') {
-        tools.push({ googleSearch: {} });
-        console.log('Added Google Search tool');
-    } else {
-        console.log('Google Search tool disabled');
-    }
-
-    return tools;
+            if (input.audio?.data) {
+                ws.send(
+                    JSON.stringify({
+                        type: 'input_audio_buffer.append',
+                        audio: input.audio.data,
+                    })
+                );
+            }
+        },
+        close: async () => {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                try {
+                    ws.close();
+                } catch (e) {
+                    console.warn('Error closing WebSocket:', e.message);
+                }
+            }
+        },
+    };
 }
 
-async function getStoredSetting(key, defaultValue) {
-    try {
-        const windows = BrowserWindow.getAllWindows();
-        if (windows.length > 0) {
-            // Wait a bit for the renderer to be ready
-            await new Promise(resolve => setTimeout(resolve, 100));
+function handleServerEvent(event) {
+    const type = event.type;
 
-            // Try to get setting from renderer process localStorage
-            const value = await windows[0].webContents.executeJavaScript(`
-                (function() {
-                    try {
-                        if (typeof localStorage === 'undefined') {
-                            console.log('localStorage not available yet for ${key}');
-                            return '${defaultValue}';
-                        }
-                        const stored = localStorage.getItem('${key}');
-                        console.log('Retrieved setting ${key}:', stored);
-                        return stored || '${defaultValue}';
-                    } catch (e) {
-                        console.error('Error accessing localStorage for ${key}:', e);
-                        return '${defaultValue}';
-                    }
-                })()
-            `);
-            return value;
+    // Input speech transcription (user / interviewer audio)
+    if (type === 'conversation.item.input_audio_transcription.delta' && event.delta) {
+        currentTranscription += event.delta;
+        return;
+    }
+    if (type === 'conversation.item.input_audio_transcription.completed' && event.transcript) {
+        // Prefer full completed transcript when available
+        if (!currentTranscription || currentTranscription.length < event.transcript.length) {
+            currentTranscription = event.transcript;
+        } else if (event.transcript.trim()) {
+            currentTranscription = event.transcript;
         }
-    } catch (error) {
-        console.error('Error getting stored setting for', key, ':', error.message);
+        return;
     }
-    console.log('Using default value for', key, ':', defaultValue);
-    return defaultValue;
+
+    // Streaming text response (GA)
+    if (type === 'response.output_text.delta' && event.delta) {
+        const isNewResponse = messageBuffer === '';
+        messageBuffer += event.delta;
+        sendToRenderer(isNewResponse ? 'new-response' : 'update-response', messageBuffer);
+        return;
+    }
+
+    // Streaming text response (beta / alternate)
+    if (type === 'response.text.delta' && (event.delta || event.text)) {
+        const delta = event.delta || event.text;
+        const isNewResponse = messageBuffer === '';
+        messageBuffer += delta;
+        sendToRenderer(isNewResponse ? 'new-response' : 'update-response', messageBuffer);
+        return;
+    }
+
+    // Audio transcript deltas (if audio modality is ever enabled)
+    if ((type === 'response.output_audio_transcript.delta' || type === 'response.audio_transcript.delta') && event.delta) {
+        const isNewResponse = messageBuffer === '';
+        messageBuffer += event.delta;
+        sendToRenderer(isNewResponse ? 'new-response' : 'update-response', messageBuffer);
+        return;
+    }
+
+    if (
+        type === 'response.output_text.done' ||
+        type === 'response.text.done' ||
+        type === 'response.output_audio_transcript.done' ||
+        type === 'response.audio_transcript.done'
+    ) {
+        if (event.text && !messageBuffer) {
+            messageBuffer = event.text;
+            sendToRenderer('update-response', messageBuffer);
+        }
+        return;
+    }
+
+    if (type === 'response.done' || type === 'response.completed') {
+        // Extract final text from response payload if buffer is empty
+        if (!messageBuffer.trim() && event.response?.output) {
+            for (const item of event.response.output) {
+                if (item.type === 'message' && item.content) {
+                    for (const part of item.content) {
+                        if (part.type === 'output_text' || part.type === 'text') {
+                            messageBuffer += part.text || '';
+                        }
+                        if (part.type === 'audio' && part.transcript) {
+                            messageBuffer += part.transcript;
+                        }
+                    }
+                }
+            }
+            if (messageBuffer.trim()) {
+                sendToRenderer('update-response', messageBuffer);
+            }
+        }
+
+        if (messageBuffer.trim() !== '') {
+            sendToRenderer('update-response', messageBuffer);
+            if (currentTranscription) {
+                saveConversationTurn(currentTranscription, messageBuffer);
+                currentTranscription = '';
+            }
+        }
+        messageBuffer = '';
+        sendToRenderer('update-status', 'Listening...');
+        return;
+    }
+
+    if (type === 'input_audio_buffer.speech_started') {
+        sendToRenderer('update-status', 'Listening...');
+        return;
+    }
+
+    if (type === 'input_audio_buffer.speech_stopped') {
+        sendToRenderer('update-status', 'Processing...');
+        return;
+    }
+
+    if (type === 'error') {
+        const msg = event.error?.message || event.message || 'Unknown OpenAI error';
+        console.error('OpenAI Realtime error:', msg, event);
+        sendToRenderer('update-status', 'Error: ' + msg);
+        return;
+    }
+
+    if (type === 'session.created' || type === 'session.updated') {
+        console.log('OpenAI session event:', type);
+    }
 }
 
-async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'interview', language = 'en-US', isReconnect = false) {
+function connectRealtimeWebSocket(apiKey, systemPrompt) {
+    return new Promise((resolve, reject) => {
+        const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(REALTIME_MODEL)}`;
+        const ws = new WebSocket(url, {
+            headers: {
+                Authorization: `Bearer ${apiKey}`,
+                'OpenAI-Beta': 'realtime=v1',
+            },
+        });
+
+        let settled = false;
+        let sessionConfigured = false;
+
+        const timeout = setTimeout(() => {
+            if (!settled) {
+                settled = true;
+                try {
+                    ws.close();
+                } catch (_) {
+                    /* ignore */
+                }
+                reject(new Error('Timed out connecting to ChatGPT Realtime API'));
+            }
+        }, 20000);
+
+        ws.on('open', () => {
+            console.log('Connected to OpenAI Realtime API – configuring session');
+
+            // Text-only responses for teleprompter UI; stream PCM16 24 kHz system/mic audio in
+            const sessionUpdate = {
+                type: 'session.update',
+                session: {
+                    modalities: ['text'],
+                    instructions: systemPrompt,
+                    input_audio_format: 'pcm16',
+                    input_audio_transcription: {
+                        model: 'whisper-1',
+                    },
+                    turn_detection: {
+                        type: 'server_vad',
+                        threshold: 0.5,
+                        prefix_padding_ms: 300,
+                        silence_duration_ms: 500,
+                    },
+                    temperature: 0.8,
+                },
+            };
+
+            ws.send(JSON.stringify(sessionUpdate));
+        });
+
+        ws.on('message', raw => {
+            let event;
+            try {
+                event = JSON.parse(raw.toString());
+            } catch (e) {
+                console.error('Failed to parse OpenAI event:', e);
+                return;
+            }
+
+            // Resolve once session is ready (session.created may arrive before our update)
+            if (!sessionConfigured && (event.type === 'session.updated' || event.type === 'session.created')) {
+                // Prefer session.updated as "fully configured", but accept created to avoid hangs
+                if (event.type === 'session.updated' || event.type === 'session.created') {
+                    sessionConfigured = true;
+                    if (!settled) {
+                        settled = true;
+                        clearTimeout(timeout);
+                        resolve(createRealtimeSession(ws));
+                    }
+                }
+            }
+
+            handleServerEvent(event);
+        });
+
+        ws.on('error', err => {
+            console.error('OpenAI WebSocket error:', err.message);
+            if (!settled) {
+                settled = true;
+                clearTimeout(timeout);
+                reject(err);
+            } else {
+                sendToRenderer('update-status', 'Error: ' + err.message);
+            }
+        });
+
+        ws.on('close', (code, reason) => {
+            console.log('OpenAI WebSocket closed:', code, reason?.toString?.() || reason);
+            clearTimeout(timeout);
+
+            if (!settled) {
+                settled = true;
+                reject(new Error(`WebSocket closed before ready (${code})`));
+                return;
+            }
+
+            if (isUserClosing) {
+                isUserClosing = false;
+                sendToRenderer('update-status', 'Session closed');
+                return;
+            }
+
+            if (sessionParams && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                attemptReconnect();
+            } else {
+                sendToRenderer('update-status', 'Session closed');
+            }
+        });
+    });
+}
+
+async function initializeChatGPTSession(apiKey, customPrompt = '', profile = 'interview', language = 'en-US', isReconnect = false) {
     if (isInitializingSession) {
         console.log('Session initialization already in progress');
         return false;
@@ -194,128 +408,32 @@ async function initializeGeminiSession(apiKey, customPrompt = '', profile = 'int
         sendToRenderer('session-initializing', true);
     }
 
-    // Store params for reconnection
     if (!isReconnect) {
         sessionParams = { apiKey, customPrompt, profile, language };
         reconnectAttempts = 0;
     }
 
-    const client = new GoogleGenAI({
-        vertexai: false,
-        apiKey: apiKey,
-        httpOptions: { apiVersion: 'v1alpha' },
-    });
+    const systemPrompt = getSystemPrompt(profile, customPrompt, true);
 
-    // Get enabled tools first to determine Google Search status
-    const enabledTools = await getEnabledTools();
-    const googleSearchEnabled = enabledTools.some(tool => tool.googleSearch);
-
-    const systemPrompt = getSystemPrompt(profile, customPrompt, googleSearchEnabled);
-
-    // Initialize new conversation session only on first connect
     if (!isReconnect) {
         initializeNewSession(profile, customPrompt);
     }
 
     try {
-        const session = await client.live.connect({
-            model: 'gemini-2.5-flash-native-audio-preview-09-2025',
-            callbacks: {
-                onopen: function () {
-                    sendToRenderer('update-status', 'Live session connected');
-                },
-                onmessage: function (message) {
-                    console.log('----------------', message);
-
-                    // Handle input transcription (what was spoken)
-                    if (message.serverContent?.inputTranscription?.results) {
-                        currentTranscription += formatSpeakerResults(message.serverContent.inputTranscription.results);
-                    } else if (message.serverContent?.inputTranscription?.text) {
-                        const text = message.serverContent.inputTranscription.text;
-                        if (text.trim() !== '') {
-                            currentTranscription += text;
-                        }
-                    }
-
-                    // Handle AI model response via output transcription (native audio model)
-                    if (message.serverContent?.outputTranscription?.text) {
-                        const text = message.serverContent.outputTranscription.text;
-                        if (text.trim() === '') return; // Ignore empty transcriptions
-                        const isNewResponse = messageBuffer === '';
-                        messageBuffer += text;
-                        sendToRenderer(isNewResponse ? 'new-response' : 'update-response', messageBuffer);
-                    }
-
-                    if (message.serverContent?.generationComplete) {
-                        // Only send/save if there's actual content
-                        if (messageBuffer.trim() !== '') {
-                            sendToRenderer('update-response', messageBuffer);
-
-                            // Save conversation turn when we have both transcription and AI response
-                            if (currentTranscription) {
-                                saveConversationTurn(currentTranscription, messageBuffer);
-                                currentTranscription = ''; // Reset for next turn
-                            }
-                        }
-                        messageBuffer = '';
-                    }
-
-                    if (message.serverContent?.turnComplete) {
-                        sendToRenderer('update-status', 'Listening...');
-                    }
-                },
-                onerror: function (e) {
-                    console.log('Session error:', e.message);
-                    sendToRenderer('update-status', 'Error: ' + e.message);
-                },
-                onclose: function (e) {
-                    console.log('Session closed:', e.reason);
-
-                    // Don't reconnect if user intentionally closed
-                    if (isUserClosing) {
-                        isUserClosing = false;
-                        sendToRenderer('update-status', 'Session closed');
-                        return;
-                    }
-
-                    // Attempt reconnection
-                    if (sessionParams && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-                        attemptReconnect();
-                    } else {
-                        sendToRenderer('update-status', 'Session closed');
-                    }
-                },
-            },
-            config: {
-                responseModalities: [Modality.AUDIO],
-                proactivity: { proactiveAudio: true },
-                outputAudioTranscription: {},
-                tools: enabledTools,
-                // Enable speaker diarization
-                inputAudioTranscription: {
-                    enableSpeakerDiarization: true,
-                    minSpeakerCount: 2,
-                    maxSpeakerCount: 2,
-                },
-                contextWindowCompression: { slidingWindow: {} },
-                speechConfig: { languageCode: language },
-                systemInstruction: {
-                    parts: [{ text: systemPrompt }],
-                },
-            },
-        });
-
+        const session = await connectRealtimeWebSocket(apiKey, systemPrompt);
         isInitializingSession = false;
         if (!isReconnect) {
             sendToRenderer('session-initializing', false);
         }
+        sendToRenderer('update-status', 'Live session connected');
         return session;
     } catch (error) {
-        console.error('Failed to initialize Gemini session:', error);
+        console.error('Failed to initialize ChatGPT session:', error);
         isInitializingSession = false;
         if (!isReconnect) {
             sendToRenderer('session-initializing', false);
         }
+        sendToRenderer('update-status', 'Error: ' + (error.message || 'Failed to connect'));
         return null;
     }
 }
@@ -324,28 +442,25 @@ async function attemptReconnect() {
     reconnectAttempts++;
     console.log(`Reconnection attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
 
-    // Clear stale buffers
     messageBuffer = '';
     currentTranscription = '';
 
     sendToRenderer('update-status', `Reconnecting... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
 
-    // Wait before attempting
     await new Promise(resolve => setTimeout(resolve, RECONNECT_DELAY));
 
     try {
-        const session = await initializeGeminiSession(
+        const session = await initializeChatGPTSession(
             sessionParams.apiKey,
             sessionParams.customPrompt,
             sessionParams.profile,
             sessionParams.language,
-            true // isReconnect
+            true
         );
 
-        if (session && global.geminiSessionRef) {
-            global.geminiSessionRef.current = session;
+        if (session && global.openaiSessionRef) {
+            global.openaiSessionRef.current = session;
 
-            // Restore context from conversation history via text message
             const contextMessage = buildContextMessage();
             if (contextMessage) {
                 try {
@@ -353,11 +468,9 @@ async function attemptReconnect() {
                     await session.sendRealtimeInput({ text: contextMessage });
                 } catch (contextError) {
                     console.error('Failed to restore context:', contextError);
-                    // Continue without context - better than failing
                 }
             }
 
-            // Don't reset reconnectAttempts here - let it reset on next fresh session
             sendToRenderer('update-status', 'Reconnected! Listening...');
             console.log('Session reconnected successfully');
             return true;
@@ -366,15 +479,13 @@ async function attemptReconnect() {
         console.error(`Reconnection attempt ${reconnectAttempts} failed:`, error);
     }
 
-    // If we still have attempts left, try again
     if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         return attemptReconnect();
     }
 
-    // Max attempts reached - notify frontend
     console.log('Max reconnection attempts reached');
     sendToRenderer('reconnect-failed', {
-        message: 'Tried 3 times to reconnect. Must be upstream/network issues. Try restarting or download updated app from site.',
+        message: 'Tried 3 times to reconnect. Must be upstream/network issues. Try restarting or check your OpenAI API key.',
     });
     sessionParams = null;
     return false;
@@ -384,7 +495,6 @@ function killExistingSystemAudioDump() {
     return new Promise(resolve => {
         console.log('Checking for existing SystemAudioDump processes...');
 
-        // Kill any existing SystemAudioDump processes
         const killProc = spawn('pkill', ['-f', 'SystemAudioDump'], {
             stdio: 'ignore',
         });
@@ -403,7 +513,6 @@ function killExistingSystemAudioDump() {
             resolve();
         });
 
-        // Timeout after 2 seconds
         setTimeout(() => {
             killProc.kill();
             resolve();
@@ -411,10 +520,9 @@ function killExistingSystemAudioDump() {
     });
 }
 
-async function startMacOSAudioCapture(geminiSessionRef) {
+async function startMacOSAudioCapture(openaiSessionRef) {
     if (process.platform !== 'darwin') return false;
 
-    // Kill any existing SystemAudioDump processes first
     await killExistingSystemAudioDump();
 
     console.log('Starting macOS audio capture with SystemAudioDump...');
@@ -464,7 +572,7 @@ async function startMacOSAudioCapture(geminiSessionRef) {
 
             const monoChunk = CHANNELS === 2 ? convertStereoToMono(chunk) : chunk;
             const base64Data = monoChunk.toString('base64');
-            sendAudioToGemini(base64Data, geminiSessionRef);
+            sendAudioToChatGPT(base64Data, openaiSessionRef);
 
             if (process.env.DEBUG_AUDIO) {
                 console.log(`Processed audio chunk: ${chunk.length} bytes`);
@@ -515,96 +623,102 @@ function stopMacOSAudioCapture() {
     }
 }
 
-async function sendAudioToGemini(base64Data, geminiSessionRef) {
-    if (!geminiSessionRef.current) return;
+async function sendAudioToChatGPT(base64Data, openaiSessionRef) {
+    if (!openaiSessionRef.current) return;
 
     try {
         process.stdout.write('.');
-        await geminiSessionRef.current.sendRealtimeInput({
+        await openaiSessionRef.current.sendRealtimeInput({
             audio: {
                 data: base64Data,
                 mimeType: 'audio/pcm;rate=24000',
             },
         });
     } catch (error) {
-        console.error('Error sending audio to Gemini:', error);
+        console.error('Error sending audio to ChatGPT:', error);
     }
 }
 
-async function sendImageToGeminiHttp(base64Data, prompt) {
-    // Get available model based on rate limits
+async function sendImageToChatGPTHttp(base64Data, prompt) {
     const model = getAvailableModel();
-
     const apiKey = getApiKey();
     if (!apiKey) {
         return { success: false, error: 'No API key configured' };
     }
 
     try {
-        const ai = new GoogleGenAI({ apiKey: apiKey });
-
-        const contents = [
-            {
-                inlineData: {
-                    mimeType: 'image/jpeg',
-                    data: base64Data,
-                },
-            },
-            { text: prompt },
-        ];
+        const client = new OpenAI({ apiKey });
 
         console.log(`Sending image to ${model} (streaming)...`);
-        const response = await ai.models.generateContentStream({
+        const stream = await client.chat.completions.create({
             model: model,
-            contents: contents,
+            messages: [
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: prompt },
+                        {
+                            type: 'image_url',
+                            image_url: {
+                                url: `data:image/jpeg;base64,${base64Data}`,
+                            },
+                        },
+                    ],
+                },
+            ],
+            stream: true,
         });
 
-        // Increment count after successful call
         incrementLimitCount(model);
 
-        // Stream the response
         let fullText = '';
         let isFirst = true;
-        for await (const chunk of response) {
-            const chunkText = chunk.text;
+        for await (const chunk of stream) {
+            const chunkText = chunk.choices?.[0]?.delta?.content;
             if (chunkText) {
                 fullText += chunkText;
-                // Send to renderer - new response for first chunk, update for subsequent
                 sendToRenderer(isFirst ? 'new-response' : 'update-response', fullText);
                 isFirst = false;
             }
         }
 
         console.log(`Image response completed from ${model}`);
-
-        // Save screen analysis to history
         saveScreenAnalysis(prompt, fullText, model);
 
         return { success: true, text: fullText, model: model };
     } catch (error) {
-        console.error('Error sending image to Gemini HTTP:', error);
+        console.error('Error sending image to ChatGPT:', error);
         return { success: false, error: error.message };
     }
 }
 
-function setupGeminiIpcHandlers(geminiSessionRef) {
-    // Store the geminiSessionRef globally for reconnection access
-    global.geminiSessionRef = geminiSessionRef;
+function setupOpenAIIpcHandlers(openaiSessionRef) {
+    global.openaiSessionRef = openaiSessionRef;
 
-    ipcMain.handle('initialize-gemini', async (event, apiKey, customPrompt, profile = 'interview', language = 'en-US') => {
-        const session = await initializeGeminiSession(apiKey, customPrompt, profile, language);
+    ipcMain.handle('initialize-chatgpt', async (event, apiKey, customPrompt, profile = 'interview', language = 'en-US') => {
+        const session = await initializeChatGPTSession(apiKey, customPrompt, profile, language);
         if (session) {
-            geminiSessionRef.current = session;
+            openaiSessionRef.current = session;
+            return true;
+        }
+        return false;
+    });
+
+    // Backward-compatible alias for older renderer code
+    ipcMain.handle('initialize-gemini', async (event, apiKey, customPrompt, profile = 'interview', language = 'en-US') => {
+        const session = await initializeChatGPTSession(apiKey, customPrompt, profile, language);
+        if (session) {
+            openaiSessionRef.current = session;
             return true;
         }
         return false;
     });
 
     ipcMain.handle('send-audio-content', async (event, { data, mimeType }) => {
-        if (!geminiSessionRef.current) return { success: false, error: 'No active Gemini session' };
+        if (!openaiSessionRef.current) return { success: false, error: 'No active ChatGPT session' };
         try {
             process.stdout.write('.');
-            await geminiSessionRef.current.sendRealtimeInput({
+            await openaiSessionRef.current.sendRealtimeInput({
                 audio: { data: data, mimeType: mimeType },
             });
             return { success: true };
@@ -614,12 +728,11 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
         }
     });
 
-    // Handle microphone audio on a separate channel
     ipcMain.handle('send-mic-audio-content', async (event, { data, mimeType }) => {
-        if (!geminiSessionRef.current) return { success: false, error: 'No active Gemini session' };
+        if (!openaiSessionRef.current) return { success: false, error: 'No active ChatGPT session' };
         try {
             process.stdout.write(',');
-            await geminiSessionRef.current.sendRealtimeInput({
+            await openaiSessionRef.current.sendRealtimeInput({
                 audio: { data: data, mimeType: mimeType },
             });
             return { success: true };
@@ -645,8 +758,7 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
 
             process.stdout.write('!');
 
-            // Use HTTP API instead of realtime session
-            const result = await sendImageToGeminiHttp(data, prompt);
+            const result = await sendImageToChatGPTHttp(data, prompt);
             return result;
         } catch (error) {
             console.error('Error sending image:', error);
@@ -655,7 +767,7 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
     });
 
     ipcMain.handle('send-text-message', async (event, text) => {
-        if (!geminiSessionRef.current) return { success: false, error: 'No active Gemini session' };
+        if (!openaiSessionRef.current) return { success: false, error: 'No active ChatGPT session' };
 
         try {
             if (!text || typeof text !== 'string' || text.trim().length === 0) {
@@ -663,7 +775,7 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
             }
 
             console.log('Sending text message:', text);
-            await geminiSessionRef.current.sendRealtimeInput({ text: text.trim() });
+            await openaiSessionRef.current.sendRealtimeInput({ text: text.trim() });
             return { success: true };
         } catch (error) {
             console.error('Error sending text:', error);
@@ -680,7 +792,7 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
         }
 
         try {
-            const success = await startMacOSAudioCapture(geminiSessionRef);
+            const success = await startMacOSAudioCapture(openaiSessionRef);
             return { success };
         } catch (error) {
             console.error('Error starting macOS audio capture:', error);
@@ -702,14 +814,12 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
         try {
             stopMacOSAudioCapture();
 
-            // Set flag to prevent reconnection attempts
             isUserClosing = true;
             sessionParams = null;
 
-            // Cleanup session
-            if (geminiSessionRef.current) {
-                await geminiSessionRef.current.close();
-                geminiSessionRef.current = null;
+            if (openaiSessionRef.current) {
+                await openaiSessionRef.current.close();
+                openaiSessionRef.current = null;
             }
 
             return { success: true };
@@ -719,7 +829,6 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
         }
     });
 
-    // Conversation history IPC handlers
     ipcMain.handle('get-current-session', async event => {
         try {
             return { success: true, data: getCurrentSessionData() };
@@ -739,23 +848,15 @@ function setupGeminiIpcHandlers(geminiSessionRef) {
         }
     });
 
+    // No-op kept for UI compatibility (Google Search is not used with ChatGPT)
     ipcMain.handle('update-google-search-setting', async (event, enabled) => {
-        try {
-            console.log('Google Search setting updated to:', enabled);
-            // The setting is already saved in localStorage by the renderer
-            // This is just for logging/confirmation
-            return { success: true };
-        } catch (error) {
-            console.error('Error updating Google Search setting:', error);
-            return { success: false, error: error.message };
-        }
+        console.log('Google Search setting ignored (ChatGPT-only mode):', enabled);
+        return { success: true };
     });
 }
 
 module.exports = {
-    initializeGeminiSession,
-    getEnabledTools,
-    getStoredSetting,
+    initializeChatGPTSession,
     sendToRenderer,
     initializeNewSession,
     saveConversationTurn,
@@ -764,8 +865,9 @@ module.exports = {
     startMacOSAudioCapture,
     convertStereoToMono,
     stopMacOSAudioCapture,
-    sendAudioToGemini,
-    sendImageToGeminiHttp,
-    setupGeminiIpcHandlers,
-    formatSpeakerResults,
+    sendAudioToChatGPT,
+    sendImageToChatGPTHttp,
+    setupOpenAIIpcHandlers,
+    REALTIME_MODEL,
+    VISION_MODEL,
 };

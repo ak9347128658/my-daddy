@@ -4,14 +4,14 @@ if (require('electron-squirrel-startup')) {
 
 const { app, BrowserWindow, shell, ipcMain } = require('electron');
 const { createWindow, updateGlobalShortcuts } = require('./utils/window');
-const { setupGeminiIpcHandlers, stopMacOSAudioCapture, sendToRenderer } = require('./utils/gemini');
+const { setupOpenAIIpcHandlers, stopMacOSAudioCapture, sendToRenderer } = require('./utils/openai');
 const storage = require('./storage');
 
-const geminiSessionRef = { current: null };
+const openaiSessionRef = { current: null };
 let mainWindow = null;
 
 function createMainWindow() {
-    mainWindow = createWindow(sendToRenderer, geminiSessionRef);
+    mainWindow = createWindow(sendToRenderer, openaiSessionRef);
     return mainWindow;
 }
 
@@ -20,7 +20,7 @@ app.whenReady().then(async () => {
     storage.initializeStorage();
 
     createMainWindow();
-    setupGeminiIpcHandlers(geminiSessionRef);
+    setupOpenAIIpcHandlers(openaiSessionRef);
     setupStorageIpcHandlers();
     setupGeneralIpcHandlers();
 });
@@ -263,7 +263,7 @@ function setupGeneralIpcHandlers() {
         if (mainWindow) {
             // Also save to storage
             storage.setKeybinds(newKeybinds);
-            updateGlobalShortcuts(newKeybinds, mainWindow, sendToRenderer, geminiSessionRef);
+            updateGlobalShortcuts(newKeybinds, mainWindow, sendToRenderer, openaiSessionRef);
         }
     });
 

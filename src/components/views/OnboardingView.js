@@ -498,7 +498,7 @@ export class OnboardingView extends LitElement {
             {
                 icon: 'assets/onboarding/ready.svg',
                 title: 'Ready to Go',
-                content: 'Add your Gemini API key in settings and start getting AI-powered assistance in real-time.',
+                content: 'Add your ChatGPT (OpenAI) API key and start getting AI-powered assistance in real-time.',
             },
         ];
 
@@ -512,7 +512,9 @@ export class OnboardingView extends LitElement {
             <div class="onboarding-container">
                 <button class="close-button" @click=${this.handleClose} title="Close">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                        <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                        <path
+                            d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"
+                        />
                     </svg>
                 </button>
                 <canvas class="gradient-canvas"></canvas>
@@ -522,34 +524,38 @@ export class OnboardingView extends LitElement {
                     <div class="slide-title">${slide.title}</div>
                     <div class="slide-content">${slide.content}</div>
 
-                    ${slide.showTextarea
-                        ? html`
-                              <textarea
-                                  class="context-textarea"
-                                  placeholder="Paste your resume, job description, or any relevant context here..."
-                                  .value=${this.contextText}
-                                  @input=${this.handleContextInput}
-                              ></textarea>
-                          `
-                        : ''}
-                    ${slide.showFeatures
-                        ? html`
-                              <div class="feature-list">
-                                  <div class="feature-item">
-                                      <span class="feature-icon">-</span>
-                                      Customize AI behavior and responses
+                    ${
+                        slide.showTextarea
+                            ? html`
+                                  <textarea
+                                      class="context-textarea"
+                                      placeholder="Paste your resume, job description, or any relevant context here..."
+                                      .value=${this.contextText}
+                                      @input=${this.handleContextInput}
+                                  ></textarea>
+                              `
+                            : ''
+                    }
+                    ${
+                        slide.showFeatures
+                            ? html`
+                                  <div class="feature-list">
+                                      <div class="feature-item">
+                                          <span class="feature-icon">-</span>
+                                          Customize AI behavior and responses
+                                      </div>
+                                      <div class="feature-item">
+                                          <span class="feature-icon">-</span>
+                                          Review conversation history
+                                      </div>
+                                      <div class="feature-item">
+                                          <span class="feature-icon">-</span>
+                                          Adjust capture settings and intervals
+                                      </div>
                                   </div>
-                                  <div class="feature-item">
-                                      <span class="feature-icon">-</span>
-                                      Review conversation history
-                                  </div>
-                                  <div class="feature-item">
-                                      <span class="feature-icon">-</span>
-                                      Adjust capture settings and intervals
-                                  </div>
-                              </div>
-                          `
-                        : ''}
+                              `
+                            : ''
+                    }
                 </div>
 
                 <div class="navigation">
@@ -575,13 +581,22 @@ export class OnboardingView extends LitElement {
                     </div>
 
                     <button class="nav-button" @click=${this.nextSlide}>
-                        ${this.currentSlide === 4
-                            ? 'Get Started'
-                            : html`
-                                  <svg width="16px" height="16px" stroke-width="2" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                      <path d="M9 6L15 12L9 18" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"></path>
-                                  </svg>
-                              `}
+                        ${
+                            this.currentSlide === 4
+                                ? 'Get Started'
+                                : html`
+                                      <svg
+                                          width="16px"
+                                          height="16px"
+                                          stroke-width="2"
+                                          viewBox="0 0 24 24"
+                                          fill="none"
+                                          xmlns="http://www.w3.org/2000/svg"
+                                      >
+                                          <path d="M9 6L15 12L9 18" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"></path>
+                                      </svg>
+                                  `
+                        }
                     </button>
                 </div>
             </div>

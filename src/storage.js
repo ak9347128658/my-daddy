@@ -8,11 +8,11 @@ const CONFIG_VERSION = 1;
 const DEFAULT_CONFIG = {
     configVersion: CONFIG_VERSION,
     onboarded: false,
-    layout: 'normal'
+    layout: 'normal',
 };
 
 const DEFAULT_CREDENTIALS = {
-    apiKey: ''
+    apiKey: '',
 };
 
 const DEFAULT_PREFERENCES = {
@@ -25,13 +25,12 @@ const DEFAULT_PREFERENCES = {
     audioMode: 'speaker_only',
     fontSize: 'medium',
     backgroundTransparency: 0.8,
-    googleSearchEnabled: false
 };
 
 const DEFAULT_KEYBINDS = null; // null means use system defaults
 
 const DEFAULT_LIMITS = {
-    data: [] // Array of { date: 'YYYY-MM-DD', flash: { count: 0 }, flashLite: { count: 0 } }
+    data: [], // Array of { date: 'YYYY-MM-DD', gpt4o: { count: 0 }, gpt4oMini: { count: 0 } }
 };
 
 // Get the config directory path based on OS
@@ -251,8 +250,8 @@ function getTodayLimits() {
     limits.data = limits.data.filter(entry => entry.date === today);
     const newEntry = {
         date: today,
-        flash: { count: 0 },
-        flashLite: { count: 0 }
+        gpt4o: { count: 0 },
+        gpt4oMini: { count: 0 },
     };
     limits.data.push(newEntry);
     setLimits(limits);
@@ -272,8 +271,8 @@ function incrementLimitCount(model) {
         limits.data = [];
         todayEntry = {
             date: today,
-            flash: { count: 0 },
-            flashLite: { count: 0 }
+            gpt4o: { count: 0 },
+            gpt4oMini: { count: 0 },
         };
         limits.data.push(todayEntry);
     } else {
@@ -281,11 +280,15 @@ function incrementLimitCount(model) {
         limits.data = limits.data.filter(entry => entry.date === today);
     }
 
+    // Ensure counters exist (migrate from older Gemini limit shape)
+    if (!todayEntry.gpt4o) todayEntry.gpt4o = { count: 0 };
+    if (!todayEntry.gpt4oMini) todayEntry.gpt4oMini = { count: 0 };
+
     // Increment the appropriate model count
-    if (model === 'gemini-2.5-flash') {
-        todayEntry.flash.count++;
-    } else if (model === 'gemini-2.5-flash-lite') {
-        todayEntry.flashLite.count++;
+    if (model === 'gpt-4o') {
+        todayEntry.gpt4o.count++;
+    } else if (model === 'gpt-4o-mini') {
+        todayEntry.gpt4oMini.count++;
     }
 
     setLimits(limits);
@@ -293,17 +296,8 @@ function incrementLimitCount(model) {
 }
 
 function getAvailableModel() {
-    const todayLimits = getTodayLimits();
-
-    // RPD limits: flash = 20, flash-lite = 20
-    // After both exhausted, fall back to flash (for paid API users)
-    if (todayLimits.flash.count < 20) {
-        return 'gemini-2.5-flash';
-    } else if (todayLimits.flashLite.count < 20) {
-        return 'gemini-2.5-flash-lite';
-    }
-
-    return 'gemini-2.5-flash'; // Default to flash for paid API users
+    // ChatGPT-only: always use GPT-4o for vision/screen analysis
+    return 'gpt-4o';
 }
 
 // ============ HISTORY ============
@@ -327,7 +321,7 @@ function saveSession(sessionId, data) {
         customPrompt: data.customPrompt || existingSession?.customPrompt || null,
         // Conversation data
         conversationHistory: data.conversationHistory || existingSession?.conversationHistory || [],
-        screenAnalysisHistory: data.screenAnalysisHistory || existingSession?.screenAnalysisHistory || []
+        screenAnalysisHistory: data.screenAnalysisHistory || existingSession?.screenAnalysisHistory || [],
     };
     return writeJsonFile(sessionPath, sessionData);
 }
@@ -344,7 +338,8 @@ function getAllSessions() {
             return [];
         }
 
-        const files = fs.readdirSync(historyDir)
+        const files = fs
+            .readdirSync(historyDir)
             .filter(f => f.endsWith('.json'))
             .sort((a, b) => {
                 // Sort by timestamp descending (newest first)
@@ -353,22 +348,24 @@ function getAllSessions() {
                 return tsB - tsA;
             });
 
-        return files.map(file => {
-            const sessionId = file.replace('.json', '');
-            const data = readJsonFile(path.join(historyDir, file), null);
-            if (data) {
-                return {
-                    sessionId,
-                    createdAt: data.createdAt,
-                    lastUpdated: data.lastUpdated,
-                    messageCount: data.conversationHistory?.length || 0,
-                    screenAnalysisCount: data.screenAnalysisHistory?.length || 0,
-                    profile: data.profile || null,
-                    customPrompt: data.customPrompt || null
-                };
-            }
-            return null;
-        }).filter(Boolean);
+        return files
+            .map(file => {
+                const sessionId = file.replace('.json', '');
+                const data = readJsonFile(path.join(historyDir, file), null);
+                if (data) {
+                    return {
+                        sessionId,
+                        createdAt: data.createdAt,
+                        lastUpdated: data.lastUpdated,
+                        messageCount: data.conversationHistory?.length || 0,
+                        screenAnalysisCount: data.screenAnalysisHistory?.length || 0,
+                        profile: data.profile || null,
+                        customPrompt: data.customPrompt || null,
+                    };
+                }
+                return null;
+            })
+            .filter(Boolean);
     } catch (error) {
         console.error('Error reading sessions:', error.message);
         return [];
@@ -451,5 +448,5 @@ module.exports = {
     deleteAllSessions,
 
     // Clear all
-    clearAllData
+    clearAllData,
 };

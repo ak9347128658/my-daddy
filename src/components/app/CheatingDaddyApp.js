@@ -11,7 +11,11 @@ export class CheatingDaddyApp extends LitElement {
     static styles = css`
         * {
             box-sizing: border-box;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-family:
+                'Inter',
+                -apple-system,
+                BlinkMacSystemFont,
+                sans-serif;
             margin: 0px;
             padding: 0px;
             cursor: default;
@@ -142,19 +146,13 @@ export class CheatingDaddyApp extends LitElement {
 
     async _loadFromStorage() {
         try {
-            const [config, prefs] = await Promise.all([
-                cheatingDaddy.storage.getConfig(),
-                cheatingDaddy.storage.getPreferences()
-            ]);
+            const [config, prefs] = await Promise.all([cheatingDaddy.storage.getConfig(), cheatingDaddy.storage.getPreferences()]);
 
             // Check onboarding status
             this.currentView = config.onboarded ? 'main' : 'onboarding';
 
             // Apply background appearance (color + transparency)
-            this.applyBackgroundAppearance(
-                prefs.backgroundColor ?? '#1e1e1e',
-                prefs.backgroundTransparency ?? 0.8
-            );
+            this.applyBackgroundAppearance(prefs.backgroundColor ?? '#1e1e1e', prefs.backgroundTransparency ?? 0.8);
 
             // Load preferences
             this.selectedProfile = prefs.selectedProfile || 'interview';
@@ -175,18 +173,20 @@ export class CheatingDaddyApp extends LitElement {
 
     hexToRgb(hex) {
         const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-        return result ? {
-            r: parseInt(result[1], 16),
-            g: parseInt(result[2], 16),
-            b: parseInt(result[3], 16)
-        } : { r: 30, g: 30, b: 30 };
+        return result
+            ? {
+                  r: parseInt(result[1], 16),
+                  g: parseInt(result[2], 16),
+                  b: parseInt(result[3], 16),
+              }
+            : { r: 30, g: 30, b: 30 };
     }
 
     lightenColor(rgb, amount) {
         return {
             r: Math.min(255, rgb.r + amount),
             g: Math.min(255, rgb.g + amount),
-            b: Math.min(255, rgb.b + amount)
+            b: Math.min(255, rgb.b + amount),
         };
     }
 
@@ -302,7 +302,7 @@ export class CheatingDaddyApp extends LitElement {
         this.requestUpdate();
     }
 
-        async handleClose() {
+    async handleClose() {
         if (this.currentView === 'customize' || this.currentView === 'help' || this.currentView === 'history') {
             this.currentView = 'main';
         } else if (this.currentView === 'assistant') {
@@ -345,7 +345,7 @@ export class CheatingDaddyApp extends LitElement {
             return;
         }
 
-        await cheatingDaddy.initializeGemini(this.selectedProfile, this.selectedLanguage);
+        await cheatingDaddy.initializeChatGPT(this.selectedProfile, this.selectedLanguage);
         // Pass the screenshot interval as string (including 'manual' option)
         cheatingDaddy.startCapture(this.selectedScreenshotInterval, this.selectedImageQuality);
         this.responses = [];
@@ -357,7 +357,7 @@ export class CheatingDaddyApp extends LitElement {
     async handleAPIKeyHelp() {
         if (window.require) {
             const { ipcRenderer } = window.require('electron');
-            await ipcRenderer.invoke('open-external', 'https://cheatingdaddy.com/help/api-key');
+            await ipcRenderer.invoke('open-external', 'https://platform.openai.com/api-keys');
         }
     }
 
@@ -384,7 +384,7 @@ export class CheatingDaddyApp extends LitElement {
 
     toggleConversationPlayback() {
         this.isConversationPaused = !this.isConversationPaused;
-        
+
         if (this.isConversationPaused) {
             // Pause conversation - stop audio capture and AI processing
             console.log('Conversation paused');
@@ -398,7 +398,7 @@ export class CheatingDaddyApp extends LitElement {
                 window.cheatingDaddy.resumeCapture();
             }
         }
-        
+
         this.requestUpdate();
         return this.isConversationPaused;
     }
@@ -530,11 +530,11 @@ export class CheatingDaddyApp extends LitElement {
 
     render() {
         const viewClassMap = {
-            'assistant': 'assistant-view',
-            'onboarding': 'onboarding-view',
-            'customize': 'settings-view',
-            'help': 'help-view',
-            'history': 'history-view',
+            assistant: 'assistant-view',
+            onboarding: 'onboarding-view',
+            customize: 'settings-view',
+            help: 'help-view',
+            history: 'history-view',
         };
         const mainContentClass = `main-content ${viewClassMap[this.currentView] || 'with-border'}`;
 
