@@ -6,8 +6,8 @@ const { saveDebugAudio } = require('../audioUtils');
 const { getSystemPrompt, getFileAttachmentSystemPrompt, messageHasFileAttachment } = require('./prompts');
 const { getAvailableModel, incrementLimitCount, getApiKey } = require('../storage');
 
-// OpenAI ChatGPT models only
-const REALTIME_MODEL = 'gpt-4o-realtime-preview';
+// OpenAI ChatGPT models only (GA Realtime — beta gpt-4o-realtime-preview is shut down)
+const REALTIME_MODEL = 'gpt-realtime';
 const VISION_MODEL = 'gpt-4o';
 
 // Conversation tracking variables
@@ -213,12 +213,10 @@ function createRealtimeSession(ws) {
 
                 // skipResponse: inject into live context only (HTTP will answer)
                 if (!input.skipResponse) {
-                    // Support both legacy beta (modalities) and GA (output_modalities) fields
                     ws.send(
                         JSON.stringify({
                             type: 'response.create',
                             response: {
-                                modalities: ['text'],
                                 output_modalities: ['text'],
                             },
                         })
@@ -249,7 +247,7 @@ function createRealtimeSession(ws) {
                         item: {
                             type: 'message',
                             role: 'assistant',
-                            content: [{ type: 'text', text }],
+                            content: [{ type: 'output_text', text }],
                         },
                     })
                 );
@@ -299,8 +297,12 @@ function handleServerEvent(event) {
         return;
     }
 
-    // Some API versions put the interviewer transcript on the created item
-    if ((type === 'conversation.item.created' || type === 'conversation.item.added') && event.item?.role === 'user' && event.item.content) {
+    // GA uses conversation.item.added / .done; transcript may land on the item
+    if (
+        (type === 'conversation.item.created' || type === 'conversation.item.added' || type === 'conversation.item.done') &&
+        event.item?.role === 'user' &&
+        event.item.content
+    ) {
         for (const part of event.item.content) {
             if ((part.type === 'input_audio' || part.type === 'audio') && part.transcript) {
                 applyInterviewerTranscript(part.transcript);
@@ -356,8 +358,8 @@ function handleServerEvent(event) {
                         if (part.type === 'output_text' || part.type === 'text') {
                             messageBuffer += part.text || '';
                         }
-                        if (part.type === 'audio' && part.transcript) {
-                            messageBuffer += part.transcript;
+                        if ((part.type === 'output_audio' || part.type === 'audio') && (part.transcript || part.text)) {
+                            messageBuffer += part.transcript || part.text || '';
                         }
                     }
                 }
@@ -401,7 +403,13 @@ function handleServerEvent(event) {
     }
 
     if (type === 'session.created' || type === 'session.updated') {
-        console.log('OpenAI session event:', type);
+        const session = event.session || {};
+        console.log('OpenAI session event:', type, {
+            sessionType: session.type,
+            model: session.model,
+            outputModalities: session.output_modalities || session.modalities,
+            hasInputTranscription: Boolean(session.audio?.input?.transcription || session.input_audio_transcription),
+        });
     }
 }
 
@@ -411,7 +419,6 @@ function connectRealtimeWebSocket(apiKey, systemPrompt, language = 'en-US') {
         const ws = new WebSocket(url, {
             headers: {
                 Authorization: `Bearer ${apiKey}`,
-                'OpenAI-Beta': 'realtime=v1',
             },
         });
 
@@ -434,25 +441,35 @@ function connectRealtimeWebSocket(apiKey, systemPrompt, language = 'en-US') {
         ws.on('open', () => {
             console.log('Connected to OpenAI Realtime API – configuring session');
 
-            // Text-only responses for teleprompter UI; stream PCM16 24 kHz system/mic audio in
+            // GA Realtime session: text-only teleprompter output, PCM16 24 kHz interviewer audio in.
+            // Do not send Beta fields (modalities, input_audio_format, temperature, OpenAI-Beta) —
+            // the GA API rejects the entire update with beta_api_shape_disabled.
             const whisperLanguage = (language || 'en-US').split('-')[0] || 'en';
             const sessionUpdate = {
                 type: 'session.update',
                 session: {
-                    modalities: ['text'],
+                    type: 'realtime',
+                    model: REALTIME_MODEL,
+                    output_modalities: ['text'],
                     instructions: systemPrompt,
-                    input_audio_format: 'pcm16',
-                    input_audio_transcription: {
-                        model: 'whisper-1',
-                        language: whisperLanguage,
+                    audio: {
+                        input: {
+                            format: {
+                                type: 'audio/pcm',
+                                rate: 24000,
+                            },
+                            transcription: {
+                                model: 'whisper-1',
+                                language: whisperLanguage,
+                            },
+                            turn_detection: {
+                                type: 'server_vad',
+                                threshold: 0.5,
+                                prefix_padding_ms: 300,
+                                silence_duration_ms: 500,
+                            },
+                        },
                     },
-                    turn_detection: {
-                        type: 'server_vad',
-                        threshold: 0.5,
-                        prefix_padding_ms: 300,
-                        silence_duration_ms: 500,
-                    },
-                    temperature: 0.8,
                 },
             };
 
